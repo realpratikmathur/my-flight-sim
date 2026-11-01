@@ -15,8 +15,10 @@ register_fprime_library(
         "${CMAKE_CURRENT_LIST_DIR}/FlightController.fpp"
     SOURCES
         "${CMAKE_CURRENT_LIST_DIR}/FlightController.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/ControlLaw.cpp"
     HEADERS
         "${CMAKE_CURRENT_LIST_DIR}/FlightMath.hpp"
+        "${CMAKE_CURRENT_LIST_DIR}/ControlLaw.hpp"
 )
 
 ### Unit Tests ###

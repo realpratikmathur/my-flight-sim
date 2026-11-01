@@ -56,8 +56,11 @@ void configureTopology() {
     // Command sequencer needs to allocate memory to hold contents of command sequences
     cmdSeq.allocateBuffer(0, mallocator, 5 * 1024);
 
-    // PrmDb file name must be supplied by the using topology
-    FileHandling::prmDb.configure("PrmDb.dat");
+    // PrmDb file name must be supplied by the using topology.
+    // (Feature 04) The flight software runs with its bin/ directory as the
+    // working directory. Keep the parameter file one level up, so fprime-gds
+    // still finds exactly one program in bin/ to launch.
+    FileHandling::prmDb.configure("../PrmDb.dat");
 }
 
 void setupTopology(const TopologyState& state) {

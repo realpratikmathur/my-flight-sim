@@ -4,31 +4,42 @@ The quadcopter's flight controller.
 
 ## Introduction
 
-`FlightController` decides what the four motors do. In feature 03 it can arm,
-disarm, and run an **open-loop motor test**: every motor at the same throttle,
-with no stabilization. Feature 04 adds closed-loop flight (take off, hover, go
-to a point, land).
+`FlightController` decides what the four motors do:
+
+* **Open loop** (feature 03): arm, disarm, and a motor test with every motor at the
+  same throttle.
+* **Closed loop** (feature 04): take off, hold, go to a point, and land, using a
+  cascaded controller (`ControlLaw`) tuned through **parameters**.
 
 It is a **queued** component: it has a message queue but no thread. The
-200 Hz rate group calls its `run` port. `run` first dispatches any queued
-commands, then performs the control step. This follows *Queued Components for
-Cyclic Work* in the F´ docs (`lib/fprime/docs/user-manual/framework/component-and-port-selection.md`).
+200 Hz rate group calls its `run` port. `run` reads the sensors, dispatches
+any queued commands, then performs the control step. This follows *Queued
+Components for Cyclic Work* in the F´ docs
+(`lib/fprime/docs/user-manual/framework/component-and-port-selection.md`).
 
 The component never talks to the simulator. It only uses two
 hardware-abstraction ports (`SensorsGet`, `MotorsSet`, defined in
-`MyFlightSim/Types/VehiclePorts.fpp`), which `SimLink` implements here. Real
-sensor and motor drivers could implement them on a real vehicle.
+`MyFlightSim/Types/VehiclePorts.fpp`), which `SimLink` implements here.
+
+The control algorithm lives in a plain C++ class, `ControlLaw`
+(`ControlLaw.hpp/.cpp`). The component feeds it sensor data, a setpoint and
+the parameter values. This keeps the F´ plumbing (commands, events, telemetry,
+parameters) separate from the math.
 
 ## Requirements
 
 | Name | Description | Rationale | Validation |
 |---|---|---|---|
 | FC-001 | On every `run` call, FlightController shall read the sensors once and command the motors once. | Fixed-rate control loop. | Unit test `DisarmedMotorsOff` |
-| FC-002 | Commands shall take effect at the start of the next `run` call, not when they are received. | Commands change state at a known point in the control cycle; no mutex needed. | Unit test `CommandsWaitForRun` |
-| FC-003 | When disarmed, all motor throttles shall be 0. | Safety. | Unit tests `DisarmedMotorsOff`, `ArmDisarm` |
+| FC-002 | Commands shall take effect within the next `run` call, not when they are received. | Commands change state at a known point in the control cycle; no mutex needed. | Unit test `CommandsWaitForRun` |
+| FC-003 | When disarmed, all motor throttles shall be 0. | Safety. | Unit tests `DisarmedMotorsOff`, `ArmDisarm`, `LandTouchdownDisarms` |
 | FC-004 | `ARM` shall set all motors to `IDLE_THROTTLE`; `DISARM` shall always be accepted and stop all motors. | Operators can always stop the motors. | Unit test `ArmDisarm` |
-| FC-005 | `MOTOR_TEST` shall be rejected with `VALIDATION_ERROR` if the level is outside 0.0–1.0, and with `EXECUTION_ERROR` if the vehicle is disarmed. | Validate arguments, then state. | Unit tests `MotorTestValidatesLevel`, `MotorTestRequiresArm` |
+| FC-005 | Commands shall check their arguments first (`VALIDATION_ERROR`), then the vehicle state (`EXECUTION_ERROR`). | Predictable responses for operators. | Unit tests `MotorTestValidatesLevel`, `TakeoffValidatesAltitude`, `GotoGeofence`, `CommandsCheckFlyingState` |
 | FC-006 | Telemetry shall be written every `TELEMETRY_DECIMATION` (20) control steps, i.e. 10 Hz. | 200 Hz telemetry would be wasted downlink. | Unit test `TelemetryDecimated` |
+| FC-007 | `TAKEOFF(altitude)` (armed, on the ground, 1–50 m) shall climb to the altitude above the current position, then switch to `HOLD` and emit `TakeoffComplete`. | Basic flight. | Unit test `TakeoffClimbsThenHolds`; integration (sim) |
+| FC-008 | `GOTO(east, north, altitude)` (flying, within `GEOFENCE_RADIUS`) shall fly to the point, then switch to `HOLD` and emit `Arrived`. | Basic flight. | Unit tests `GotoArrives`, `GotoGeofence`; integration (sim) |
+| FC-009 | `LAND` (flying) shall descend at `LAND_SPEED` and disarm after touchdown has been detected for `TOUCHDOWN_STEPS` consecutive steps. | Safe, automatic end of flight. | Unit test `LandTouchdownDisarms`; integration (sim) |
+| FC-010 | Control gains and vehicle properties shall be parameters, read every step and clamped to their allowed ranges; a value set outside its range shall emit `ParamOutOfRange`. | Tunable in flight, safe against typos. | Unit tests `HoverThrottleFollowsGravityParam`, `ParamOutOfRangeReported` |
 
 ## Design
 
@@ -39,21 +50,68 @@ sensor and motor drivers could implement them on a real vehicle.
 | `run` | sync input | `Svc.Sched` | `rateGroup_200Hz.RateGroupMemberOut[0]` |
 | `sensorsGet` | output | `MyFlightSim.SensorsGet` (returns `SensorData`) | `simLink.sensorsGet` |
 | `motorsOut` | output | `MyFlightSim.MotorsSet` | `simLink.motorsIn` |
+| `prmGetOut` / `prmSetOut` | param get / set | `Fw.PrmGet` / `Fw.PrmSet` | `FileHandling.prmDb` (via `param connections`) |
 
 ### Commands
 
-| Command | Kind | Arguments | Effect |
+| Command | Arguments | Allowed in | Effect |
 |---|---|---|---|
-| `ARM` | async | — | `DISARMED` → `ARMED_IDLE` |
-| `DISARM` | async | — | any → `DISARMED` |
-| `MOTOR_TEST` | async | `level: F32` (0.0–1.0) | armed → `MOTOR_TEST` |
+| `ARM` | — | any | `DISARMED` → `ARMED_IDLE` |
+| `DISARM` | — | any | → `DISARMED` |
+| `MOTOR_TEST` | `level` 0–1 | `ARMED_IDLE`, `MOTOR_TEST` | → `MOTOR_TEST` |
+| `TAKEOFF` | `altitude` 1–50 m | `ARMED_IDLE`, `MOTOR_TEST` | → `TAKEOFF` → `HOLD` |
+| `GOTO` | `east`, `north`, `altitude` 1–50 m, within geofence | `TAKEOFF`, `HOLD`, `GOTO`, `LANDING` | → `GOTO` → `HOLD` |
+| `LAND` | — | `TAKEOFF`, `HOLD`, `GOTO`, `LANDING` | → `LANDING` → `DISARMED` |
+| `<PARAM>_PRM_SET` / `<PARAM>_PRM_SAVE` | value | any | generated by FPP for every parameter |
 
 ### Modes (`enum FlightMode`)
 
-`DISARMED` (motors 0) → `ARMED_IDLE` (motors at `IDLE_THROTTLE` = 0.08) →
-`MOTOR_TEST` (motors at `level`).
+```
+DISARMED ──ARM──► ARMED_IDLE ──MOTOR_TEST──► MOTOR_TEST
+   ▲                  │  ▲                       │
+   │               TAKEOFF└───────(TAKEOFF)──────┘
+   │                  ▼
+   │               TAKEOFF ──(at target)──► HOLD ◄──(arrived)── GOTO
+   │                  │                      │ ▲ GOTO            ▲
+   │                  └────────LAND──────────┼─┴─────────────────┘
+   │                                         ▼ LAND
+   └──────(touchdown for 0.5 s)──────────  LANDING
+   (DISARM from any mode → DISARMED)
+```
+
+### Control law (`ControlLaw::step`)
+
+1. Position error × `POS_KP` → desired velocity, limited to `MAX_SPEED` / `MAX_CLIMB`
+   (when landing, the vertical part is replaced by −`LAND_SPEED`).
+2. Velocity error → desired acceleration (`VEL_KP`; vertical PI with `VEL_Z_KP`, `VEL_Z_KI`).
+3. Acceleration → desired roll and pitch (limited to `MAX_TILT_DEG`) and collective
+   thrust `mass × (gravity + a_z) / cos(tilt)`.
+4. Attitude error × `ATT_KP` (roll/pitch) and `YAW_KP` (heading) → desired body rates;
+   rate error × `RATE_KP` / `YAW_RATE_KP` × inertia → torques.
+5. Mixer: thrust + 3 torques → 4 motor thrusts; throttle = √(thrust / `MOTOR_MAX_THRUST`).
+
+## Parameters
+
+| Parameter | Default | Allowed | Meaning |
+|---|---|---|---|
+| `POS_KP` | 1.0 | 0–100 | (m/s) per m of position error |
+| `VEL_KP` | 2.0 | 0–100 | (m/s²) per (m/s), horizontal |
+| `VEL_Z_KP`, `VEL_Z_KI` | 3.0, 1.0 | 0–100 | vertical velocity PI |
+| `ATT_KP` | 6.0 | 0–100 | (rad/s) per rad, roll/pitch |
+| `RATE_KP` | 20.0 | 0–100 | 1/s, roll/pitch rate |
+| `YAW_KP`, `YAW_RATE_KP` | 3.0, 4.0 | 0–100 | heading and yaw rate |
+| `MAX_SPEED` | 3.0 | 0.5–15 | m/s horizontal |
+| `MAX_CLIMB` | 1.5 | 0.2–5 | m/s vertical |
+| `MAX_TILT_DEG` | 25 | 5–45 | degrees |
+| `LAND_SPEED` | 0.6 | 0.1–3 | m/s |
+| `VEHICLE_MASS` | 1.2 | 0.1–20 | kg |
+| `MOTOR_MAX_THRUST` | 7.0 | 0.5–100 | N per motor |
+| `GRAVITY` | 9.81 | 1–20 | m/s² |
+| `GEOFENCE_RADIUS` | 100 | 1–1000 | m from the helipad |
 
 ## Configuration
 
-`IDLE_THROTTLE` and `TELEMETRY_DECIMATION` are constants in
-`FlightController.hpp`.
+`IDLE_THROTTLE`, `TELEMETRY_DECIMATION`, `CONTROL_DT`, altitude limits, arrival
+and touchdown thresholds are constants in `FlightController.hpp`. Airframe
+geometry (arm length, inertia, yaw torque coefficient) is in `ControlLaw.hpp`,
+namespace `Vehicle`.

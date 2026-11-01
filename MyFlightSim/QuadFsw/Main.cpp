@@ -36,7 +36,7 @@ void print_usage(const char* app) {
  * @param signum
  */
 static void signalHandler(int signum) {
-    MyFlightSim::stopRateGroups();
+    MyFlightSim::requestShutdown();
 }
 
 /**
@@ -89,7 +89,7 @@ int main(int argc, char* argv[]) {
 
     // Setup, cycle, and teardown topology
     MyFlightSim::setupTopology(inputs);
-    MyFlightSim::startRateGroups();
+    MyFlightSim::waitForShutdown();
     MyFlightSim::teardownTopology(inputs);
     Fw::Logger::log("Exiting...\n");
     return 0;

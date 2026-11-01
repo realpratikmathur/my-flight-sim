@@ -60,18 +60,17 @@ void setupTopology(const TopologyState& state);
 void teardownTopology(const TopologyState& state);
 
 /**
- * \brief cycle the rate group driver using the base clock interval defined next to the divisors
+ * \brief block the main thread until requestShutdown() is called
  *
- * Blocks until stopRateGroups() is called.
+ * (Feature 02) There is no timer to start any more: the simulator drives the
+ * rate groups through SimLink. The main thread simply waits.
  */
-void startRateGroups();
+void waitForShutdown();
 
 /**
- * \brief stop the rate groups 
- *
- * This stops the cycle started by startRateGroups.
+ * \brief ask waitForShutdown() to return (safe to call from a signal handler)
  */
-void stopRateGroups();
+void requestShutdown();
 
 } // namespace MyFlightSim
 #endif

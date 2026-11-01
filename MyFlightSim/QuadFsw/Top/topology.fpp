@@ -5,9 +5,9 @@ module MyFlightSim {
   # ----------------------------------------------------------------------
 
   enum Ports_RateGroups {
+    rateGroup_200Hz
+    rateGroup_10Hz
     rateGroup_1Hz
-    rateGroup_0_5Hz
-    rateGroup_0_25Hz
   }
 
   deployment topology QuadFsw {
@@ -24,14 +24,16 @@ module MyFlightSim {
   # Instances used in the topology
   # ----------------------------------------------------------------------
     instance chronoTime
+    instance rateGroup_200Hz
+    instance rateGroup_10Hz
     instance rateGroup_1Hz
-    instance rateGroup_0_5Hz
-    instance rateGroup_0_25Hz
     instance rateGroupDriver
     instance systemResources
-    instance timer
     instance comDriver
     instance cmdSeq
+    instance simUdp
+    instance simBufferManager
+    instance simLink
 
   # ----------------------------------------------------------------------
   # Pattern graph specifiers
@@ -97,35 +99,53 @@ module MyFlightSim {
     }
 
     connections RateGroups {
-      # timer to drive rate group
-      timer.CycleOut -> rateGroupDriver.CycleIn
+      # (Feature 02) The simulator is the system clock: every datagram it sends
+      # becomes one 200 Hz tick. This replaces "timer.CycleOut -> ..." from the
+      # generated deployment.
+      simLink.cycleOut -> rateGroupDriver.CycleIn
 
-      # 1Hz rate group
+      # 200 Hz rate group: reserved for flight control (features 03-04)
+      rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup_200Hz] -> rateGroup_200Hz.CycleIn
+
+      # 10 Hz rate group
+      rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup_10Hz] -> rateGroup_10Hz.CycleIn
+      rateGroup_10Hz.RateGroupMemberOut[0] -> CdhCore.tlmSend.Run
+      rateGroup_10Hz.RateGroupMemberOut[1] -> FileHandling.fileDownlink.Run
+      rateGroup_10Hz.RateGroupMemberOut[2] -> ComCcsds.comQueue.run
+      rateGroup_10Hz.RateGroupMemberOut[3] -> ComCcsds.aggregator.timeout
+      rateGroup_10Hz.RateGroupMemberOut[4] -> CdhCore.cmdDisp.run
+      rateGroup_10Hz.RateGroupMemberOut[5] -> cmdSeq.schedIn
+
+      # 1 Hz rate group
       rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup_1Hz] -> rateGroup_1Hz.CycleIn
-      rateGroup_1Hz.RateGroupMemberOut[0] -> CdhCore.tlmSend.Run
-      rateGroup_1Hz.RateGroupMemberOut[1] -> FileHandling.fileDownlink.Run
-      rateGroup_1Hz.RateGroupMemberOut[2] -> systemResources.run
-      rateGroup_1Hz.RateGroupMemberOut[3] -> ComCcsds.comQueue.run
-      rateGroup_1Hz.RateGroupMemberOut[4] -> ComCcsds.aggregator.timeout
-      rateGroup_1Hz.RateGroupMemberOut[5] -> CdhCore.cmdDisp.run
-
-      # 0.5Hz rate group
-      rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup_0_5Hz] -> rateGroup_0_5Hz.CycleIn
-      rateGroup_0_5Hz.RateGroupMemberOut[0] -> cmdSeq.schedIn
-
-      # 0.25Hz rate group
-      rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup_0_25Hz] -> rateGroup_0_25Hz.CycleIn
-      rateGroup_0_25Hz.RateGroupMemberOut[0] -> CdhCore.$health.Run
-      rateGroup_0_25Hz.RateGroupMemberOut[1] -> ComCcsds.commsBufferManager.schedIn
-      rateGroup_0_25Hz.RateGroupMemberOut[2] -> DataProducts.dpBufferManager.schedIn
-      rateGroup_0_25Hz.RateGroupMemberOut[3] -> DataProducts.dpWriter.schedIn
-      rateGroup_0_25Hz.RateGroupMemberOut[4] -> DataProducts.dpMgr.schedIn
+      rateGroup_1Hz.RateGroupMemberOut[0] -> CdhCore.$health.Run
+      rateGroup_1Hz.RateGroupMemberOut[1] -> ComCcsds.commsBufferManager.schedIn
+      rateGroup_1Hz.RateGroupMemberOut[2] -> DataProducts.dpBufferManager.schedIn
+      rateGroup_1Hz.RateGroupMemberOut[3] -> DataProducts.dpWriter.schedIn
+      rateGroup_1Hz.RateGroupMemberOut[4] -> DataProducts.dpMgr.schedIn
+      rateGroup_1Hz.RateGroupMemberOut[5] -> systemResources.run
+      rateGroup_1Hz.RateGroupMemberOut[6] -> simBufferManager.schedIn
+      rateGroup_1Hz.RateGroupMemberOut[7] -> simLink.schedIn
     }
 
     connections CdhCore_cmdSeq {
       # Command Sequencer
       cmdSeq.comCmdOut -> CdhCore.cmdDisp.seqCmdBuff
       CdhCore.cmdDisp.seqCmdStatus -> cmdSeq.cmdResponseIn
+    }
+
+    connections Simulator {
+      # Udp driver buffer pool
+      simUdp.allocate   -> simBufferManager.bufferGetCallee
+      simUdp.deallocate -> simBufferManager.bufferSendIn
+
+      # Simulator -> flight software: datagrams in, buffers back
+      simUdp.$recv                -> simLink.drvReceiveIn
+      simLink.drvReceiveReturnOut -> simUdp.recvReturnIn
+      simUdp.ready                -> simLink.drvConnected
+
+      # Flight software -> simulator (used starting in feature 03)
+      simLink.drvSendOut -> simUdp.$send
     }
 
     connections QuadFsw {

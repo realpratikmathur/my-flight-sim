@@ -18,15 +18,20 @@ namespace MyFlightSim {
 // Instantiate a malloc allocator for cmdSeq buffer allocation
 Fw::MallocAllocator mallocator;
 
-// Rate group timing: base clock interval and divisors are coupled to rate group names
-const Fw::TimeInterval rateGroupInterval(1, 0);  // 1Hz base clock
-Svc::RateGroupDriver::DividerSet rateGroupDivisorsSet{{{1, 0}, {2, 0}, {4, 0}}};
-// Divisors: 1Hz, 0.5Hz, 0.25Hz
+// Rate group timing (feature 02): the base clock is no longer a timer. It is the
+// simulator, which sends one datagram every 5 ms of simulated time (200 Hz).
+// SimLink turns each datagram into one call of rateGroupDriver.CycleIn.
+// Divisors are in the same order as enum Ports_RateGroups in topology.fpp.
+Svc::RateGroupDriver::DividerSet rateGroupDivisorsSet{{{1, 0}, {20, 0}, {200, 0}}};
+// Divisors: 200 Hz / 1 = 200 Hz, 200 Hz / 20 = 10 Hz, 200 Hz / 200 = 1 Hz
 
 // Context tokens for rate group members (unused, set to zero)
+Svc::ActiveRateGroup::ContextArray rateGroup_200HzContext(0);
+Svc::ActiveRateGroup::ContextArray rateGroup_10HzContext(0);
 Svc::ActiveRateGroup::ContextArray rateGroup_1HzContext(0);
-Svc::ActiveRateGroup::ContextArray rateGroup_0_5HzContext(0);
-Svc::ActiveRateGroup::ContextArray rateGroup_0_25HzContext(0);
+
+// Set by requestShutdown() (called from the Ctrl-C signal handler)
+static volatile bool s_shutdownRequested = false;
 
 enum TopologyConstants {
     COMM_PRIORITY = 34,
@@ -44,9 +49,9 @@ void configureTopology() {
     rateGroupDriver.configure(rateGroupDivisorsSet);
 
     // Rate groups require context arrays.
+    rateGroup_200Hz.configure(rateGroup_200HzContext);
+    rateGroup_10Hz.configure(rateGroup_10HzContext);
     rateGroup_1Hz.configure(rateGroup_1HzContext);
-    rateGroup_0_5Hz.configure(rateGroup_0_5HzContext);
-    rateGroup_0_25Hz.configure(rateGroup_0_25HzContext);
 
     // Command sequencer needs to allocate memory to hold contents of command sequences
     cmdSeq.allocateBuffer(0, mallocator, 5 * 1024);
@@ -85,13 +90,16 @@ void setupTopology(const TopologyState& state) {
     }
 }
 
-void startRateGroups() {
-    // Blocks until stopRateGroups() is called (e.g. from signal handler)
-    timer.startTimer(rateGroupInterval);
+void waitForShutdown() {
+    // Nothing to start here: the rate groups run whenever the simulator sends
+    // a tick. The main thread just waits for Ctrl-C.
+    while (!s_shutdownRequested) {
+        (void)Os::Task::delay(Fw::TimeInterval(0, 100000));  // 100 ms
+    }
 }
 
-void stopRateGroups() {
-    timer.quit();
+void requestShutdown() {
+    s_shutdownRequested = true;
 }
 
 void teardownTopology(const TopologyState& state) {

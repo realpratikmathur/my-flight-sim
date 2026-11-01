@@ -25,6 +25,10 @@
 // Include autocoded FPP constants
 #include "MyFlightSim/QuadFsw/Top/FppConstantsAc.hpp"
 
+#include <Fw/Types/MallocAllocator.hpp>
+#include <Os/Task.hpp>
+#include <cstring>
+
 /**
  * \brief required ping constants
  *
@@ -45,9 +49,9 @@
  * ```
  */
 namespace PingEntries {
+    namespace MyFlightSim_rateGroup_200Hz {enum { WARN = 3, FATAL = 5 };}
+    namespace MyFlightSim_rateGroup_10Hz {enum { WARN = 3, FATAL = 5 };}
     namespace MyFlightSim_rateGroup_1Hz {enum { WARN = 3, FATAL = 5 };}
-    namespace MyFlightSim_rateGroup_0_5Hz {enum { WARN = 3, FATAL = 5 };}
-    namespace MyFlightSim_rateGroup_0_25Hz {enum { WARN = 3, FATAL = 5 };}
     namespace MyFlightSim_cmdSeq {enum { WARN = 3, FATAL = 5 };}
 }  // namespace PingEntries
 
@@ -71,6 +75,10 @@ struct TopologyState {
 };
 
 namespace PingEntries = ::PingEntries;
+
+//! Allocator for memory pools set up at startup (defined in QuadFswTopology.cpp).
+//! Declared here so that init-specifier code in instances.fpp can use it.
+extern Fw::MallocAllocator mallocator;
 }  // namespace MyFlightSim
 
 #endif

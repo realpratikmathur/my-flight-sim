@@ -36,6 +36,26 @@ TEST(OffNominal, DriverErrorIgnored) {
     tester.testDriverErrorIgnored();
 }
 
+TEST(Nominal, SensorsReturned) {
+    MyFlightSim::SimLinkTester tester;
+    tester.testSensorsReturned();
+}
+
+TEST(Nominal, ActuatorFrameSent) {
+    MyFlightSim::SimLinkTester tester;
+    tester.testActuatorFrameSent();
+}
+
+TEST(OffNominal, NoSendBeforeConnected) {
+    MyFlightSim::SimLinkTester tester;
+    tester.testNoSendBeforeConnected();
+}
+
+TEST(OffNominal, SendFailureReported) {
+    MyFlightSim::SimLinkTester tester;
+    tester.testSendFailureReported();
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

@@ -63,6 +63,18 @@ class SimLinkTester final : public SimLinkGTestBase {
     //! A tick number going backwards is treated as a simulator restart
     void testSimulatorRestart();
 
+    //! sensorsGet returns the sensor data from the latest valid frame
+    void testSensorsReturned();
+
+    //! actuatorSchedIn sends an ActuatorFrame answering the latest tick
+    void testActuatorFrameSent();
+
+    //! Nothing is sent before the simulator has connected
+    void testNoSendBeforeConnected();
+
+    //! A failed send is counted and reported
+    void testSendFailureReported();
+
   private:
     // ----------------------------------------------------------------------
     // Helper functions
@@ -74,8 +86,11 @@ class SimLinkTester final : public SimLinkGTestBase {
     //! Initialize components
     void initComponents();
 
-    //! Build a datagram holding a serialized SimHeader in m_data
-    Fw::Buffer makeFrame(U32 magic, U32 tick, U64 simTimeUs);
+    //! Build a datagram holding a serialized SensorFrame in m_data
+    Fw::Buffer makeFrame(U32 magic, U32 tick, U64 simTimeUs, const SensorData& sensors = SensorData());
+
+    //! Handler for the drvSendOut port: records the call, returns m_sendStatus
+    Drv::ByteStreamStatus from_drvSendOut_handler(FwIndexType portNum, Fw::Buffer& sendBuffer) override;
 
     //! Send one datagram into the component as if the Udp driver received it
     void receive(Fw::Buffer& buffer, Drv::ByteStreamStatus status = Drv::ByteStreamStatus::OP_OK);
@@ -89,7 +104,10 @@ class SimLinkTester final : public SimLinkGTestBase {
     SimLink component;
 
     //! Backing memory for test datagrams
-    U8 m_data[64];
+    U8 m_data[128];
+
+    //! Status the fake driver returns from drvSendOut
+    Drv::ByteStreamStatus m_sendStatus;
 };
 
 }  // namespace MyFlightSim

@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
-"""Feature 02: the simplest possible "simulator" -- just a clock.
+"""The simplest possible "simulator": just a clock, no physics.
 
-It sends one datagram every simulator step (5 ms = 200 Hz) to the flight
-software's SimLink component. Each datagram is an F Prime serialized
-``SimHeader`` struct (see MyFlightSim/Types/SimTypes.fpp):
+Introduced in feature 02. It sends one SensorFrame every simulator step
+(5 ms = 200 Hz) to the flight software's SimLink component, always reporting
+a vehicle sitting still on the ground. Since feature 03 the full physics
+simulator is sim/server.py; this script is kept as a tiny, dependency-free
+way to see the "simulator is the clock" idea on its own.
 
-    magic     U32  0x5153494D ("QSIM")
-    tick      U32  step number
-    simTimeUs U64  simulated time in microseconds
-
-F Prime serializes struct fields in order, big-endian, with no padding, so
-the Python equivalent is struct.Struct(">IIQ").
-
-There is no physics yet. The point is to show that **the simulator is the
-flight software's clock**: stop this script and the rate groups stop.
+Each datagram is an F Prime serialized ``SensorFrame`` struct (see
+MyFlightSim/Types/SimTypes.fpp and sim/protocol.py). F Prime serializes
+struct fields in order, big-endian, with no padding.
 
 Usage (no extra Python packages needed):
 
@@ -24,12 +20,12 @@ Usage (no extra Python packages needed):
 """
 import argparse
 import socket
-import struct
 import time
 
-SIM_MAGIC = 0x5153494D          # must match SIM_MAGIC in SimTypes.fpp
-SIM_HEADER = struct.Struct(">IIQ")  # SimHeader: magic, tick, simTimeUs
+import protocol
+
 STEP_US = 5000                  # 5 ms per step -> 200 Hz (see QuadFswTopology.cpp)
+AT_REST = protocol.Sensors()    # vehicle sitting level on the ground
 
 
 def main():
@@ -46,6 +42,11 @@ def main():
     args = parser.parse_args()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Receive (and ignore) the motor commands the flight software sends back,
+    # so they don't bounce off a closed port
+    sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sink.bind(("127.0.0.1", 50101))
+    sink.setblocking(False)
     target = (args.host, args.port)
     print(f"Sending {1e6 / STEP_US:.0f} Hz ticks to udp://{args.host}:{args.port} "
           f"at {args.speed}x real time. Ctrl-C to stop.")
@@ -56,11 +57,17 @@ def main():
     try:
         while True:
             sim_time_us = tick * STEP_US
+            frame = protocol.pack_sensor_frame(tick, sim_time_us, AT_REST)
             if args.bad_every and tick and tick % args.bad_every == 0:
-                sock.sendto(SIM_HEADER.pack(0xBADBAD00, tick, sim_time_us), target)
+                sock.sendto(b"\xba\xdb\xad\x00" + frame[4:], target)  # corrupt the magic number
             elif not (args.drop_every and tick and tick % args.drop_every == 0):
-                sock.sendto(SIM_HEADER.pack(SIM_MAGIC, tick, sim_time_us), target)
+                sock.sendto(frame, target)
             tick += 1
+            try:
+                while True:
+                    sink.recv(64)
+            except BlockingIOError:
+                pass
 
             # Pace ourselves against the wall clock
             wake = start + (tick * STEP_US / 1e6) / args.speed

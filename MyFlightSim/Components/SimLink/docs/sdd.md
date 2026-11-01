@@ -30,6 +30,9 @@ translates between the system clock and the port call to rate group driver's
 | SIMLINK-004 | SimLink shall emit `SimConnected` on the first valid datagram and whenever the tick number goes backwards (simulator restart). | Operators need to know when the simulator (re)connects. | Unit tests `ValidFramesDriveClock`, `SimulatorRestart` |
 | SIMLINK-005 | SimLink shall return every received buffer to the driver, whatever the receive status. | Buffers come from a fixed pool; leaking one would eventually stop reception. | Unit test `DriverErrorIgnored` |
 | SIMLINK-006 | SimLink shall report the tick rate and real-time factor measured against the wall clock once per second. | Shows whether the simulation keeps up with real time. | Manual (GDS) |
+| SIMLINK-007 | `sensorsGet` shall return the sensor data from the most recent valid frame. | Flight software reads simulated sensors as if from drivers. | Unit test `SensorsReturned` |
+| SIMLINK-008 | On each `actuatorSchedIn` call after the simulator has connected, SimLink shall send one `ActuatorFrame` carrying the latest tick and the latest `motorsIn` throttles. | Closes the lock-step loop: the simulator waits for this answer. | Unit tests `ActuatorFrameSent`, `NoSendBeforeConnected` |
+| SIMLINK-009 | SimLink shall count and report failed sends (`SendFailed`, `SendErrorsTotal`). | Visibility of link problems. | Unit test `SendFailureReported` |
 
 ## Design
 
@@ -40,9 +43,12 @@ translates between the system clock and the port call to rate group driver's
 | `drvReceiveIn` | guarded input | `Drv.ByteStreamData` | `simUdp.$recv` | Datagrams from the simulator (runs on the Udp receive thread) |
 | `drvReceiveReturnOut` | output | `Fw.BufferSend` | `simUdp.recvReturnIn` | Gives each buffer back to the driver |
 | `drvConnected` | guarded input | `Drv.ByteStreamReady` | `simUdp.ready` | Socket opened (informational) |
-| `drvSendOut` | output | `Drv.ByteStreamSend` | `simUdp.$send` | Datagrams to the simulator (from feature 03) |
+| `drvSendOut` | output | `Drv.ByteStreamSend` | `simUdp.$send` | Datagrams to the simulator |
 | `cycleOut` | output | `Svc.Cycle` | `rateGroupDriver.CycleIn` | The system clock tick |
 | `schedIn` | guarded input | `Svc.Sched` | `rateGroup_1Hz` | Publishes link statistics |
+| `sensorsGet` | guarded input | `MyFlightSim.SensorsGet` | `flightController.sensorsGet` | Returns the latest sensor data |
+| `motorsIn` | guarded input | `MyFlightSim.MotorsSet` | `flightController.motorsOut` | Latest motor throttles |
+| `actuatorSchedIn` | guarded input | `Svc.Sched` | `rateGroup_200Hz` (after the flight controller) | Sends the `ActuatorFrame` |
 
 `drvReceiveIn` and `schedIn` run on **different threads** (the Udp receive thread
 and the 1 Hz rate group thread) and share member variables. Both are therefore
@@ -51,14 +57,28 @@ handler.
 
 ### Wire format
 
-Every datagram starts with a `SimHeader` (`MyFlightSim/Types/SimTypes.fpp`),
-serialized by F´: fields in order, big-endian, no padding.
+Datagrams are F´-serialized structs from `MyFlightSim/Types/SimTypes.fpp`
+(fields in order, big-endian, no padding):
+
+* simulator → flight software: `SensorFrame` = `SimHeader` + `SensorData` (88 bytes)
+* flight software → simulator: `ActuatorFrame` = `SimHeader` + `MotorThrottles` (32 bytes)
+
+Both start with a `SimHeader`:
 
 | Field | Type | Meaning |
 |---|---|---|
 | `magic` | U32 | `0x5153494D` ("QSIM") |
 | `tick` | U32 | Simulator step number |
 | `simTimeUs` | U64 | Simulated time in microseconds |
+
+### Lock-step cycle
+
+1. The simulator sends `SensorFrame` for tick *N* and waits.
+2. `drvReceiveIn` stores the sensors and calls `cycleOut`, which starts the rate groups.
+3. `rateGroup_200Hz` calls `flightController.run` (reads `sensorsGet`, writes `motorsIn`),
+   then `simLink.actuatorSchedIn`.
+4. `actuatorSchedIn` sends `ActuatorFrame` for tick *N*. The simulator applies the
+   throttles, advances the physics 5 ms, and sends tick *N+1*.
 
 ### Statistics
 

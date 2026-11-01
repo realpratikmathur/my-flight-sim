@@ -3,10 +3,11 @@ module MyFlightSim {
     @ Boundary between the flight software and the physics simulator.
     @
     @ The simulator plays the role of the vehicle's hardware. Every simulator
-    @ step it sends one UDP datagram (received by a Drv.Udp driver and passed
-    @ to this component). SimLink treats each datagram as one tick of the
-    @ system clock and drives the rate group driver with it, so the flight
-    @ software runs in lock-step with simulated time.
+    @ step it sends one SensorFrame datagram (received by a Drv.Udp driver and
+    @ passed to this component). SimLink treats each datagram as one tick of
+    @ the system clock and drives the rate group driver with it, so the flight
+    @ software runs in lock-step with simulated time. At the end of each 200 Hz
+    @ cycle it answers with an ActuatorFrame carrying the motor throttles.
     passive component SimLink {
 
         # ----------------------------------------------------------------------
@@ -27,8 +28,24 @@ module MyFlightSim {
         @ Returns ownership of each received buffer to the driver
         output port drvReceiveReturnOut: Fw.BufferSend
 
-        @ Sends datagrams to the simulator (used starting in feature 03)
+        @ Sends datagrams to the simulator
         output port drvSendOut: Drv.ByteStreamSend
+
+        # ----------------------------------------------------------------------
+        # Hardware-abstraction ports (feature 03). Flight software reads the
+        # simulated sensors and drives the simulated motors through these,
+        # exactly as it would through real device drivers.
+        # ----------------------------------------------------------------------
+
+        @ Returns the sensor data from the most recent simulator frame
+        guarded input port sensorsGet: SensorsGet
+
+        @ Stores the motor throttles to send at the end of this cycle
+        guarded input port motorsIn: MotorsSet
+
+        @ Called by the 200 Hz rate group *after* the flight controller has run:
+        @ sends the motor throttles to the simulator, answering the current tick
+        guarded input port actuatorSchedIn: Svc.Sched
 
         # ----------------------------------------------------------------------
         # Clock and scheduling
@@ -67,6 +84,13 @@ module MyFlightSim {
           format "Simulator ticks missed: expected {}, received {}" \
           throttle 5 every { seconds = 10 }
 
+        @ Sending a datagram to the simulator failed
+        event SendFailed(
+            status: Drv.ByteStreamStatus @< Status returned by the driver
+        ) severity warning low \
+          format "Sending motor commands to the simulator failed: {}" \
+          throttle 5 every { seconds = 10 }
+
         # ----------------------------------------------------------------------
         # Telemetry
         # ----------------------------------------------------------------------
@@ -88,6 +112,9 @@ module MyFlightSim {
 
         @ Total number of rejected datagrams
         telemetry BadFramesTotal: U32 update on change
+
+        @ Total number of failed sends to the simulator
+        telemetry SendErrorsTotal: U32 update on change
 
         ###############################################################################
         # Standard AC Ports: Required for Channels, Events, Commands, and Parameters  #

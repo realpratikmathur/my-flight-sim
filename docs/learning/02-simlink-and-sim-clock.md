@@ -375,7 +375,8 @@ python3 sim/clock_sim.py --drop-every 400 --bad-every 1000
 * `MyFlightSim.simLink.TicksMissed` (WARNING_LO), "expected 2400, received
   2401", about every 2 s
 * `MyFlightSim.simLink.BadFrame` (WARNING_LO), "size 16 bytes, magic
-  0xbadbad00", every 5 s
+  0xbadbad00", every 5 s (on feature 03 and later branches the datagrams are
+  full 88-byte `SensorFrame`s, so this says "size 88 bytes")
 * at most 5 of each per 10 s (the `throttle 5 every { seconds = 10 }` from §1.3)
 * in **Channels**, `TicksMissedTotal` and `BadFramesTotal` counting up
 

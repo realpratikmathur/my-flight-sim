@@ -29,7 +29,7 @@ module MyFlightSim {
   # The base clock is the simulator: one tick every 5 ms (200 Hz). See
   # rateGroupDivisorsSet in QuadFswTopology.cpp for the divisors.
 
-  # 200 Hz rate group (divisor 1): flight control will run here (features 03-04)
+  # 200 Hz rate group (divisor 1): flight control
   instance rateGroup_200Hz: Svc.ActiveRateGroup base id 0x10001000 \
     queue size Default.QUEUE_SIZE \
     stack size Default.STACK_SIZE \
@@ -55,6 +55,11 @@ module MyFlightSim {
   # ----------------------------------------------------------------------
   # Queued component instances
   # ----------------------------------------------------------------------
+
+  @ The flight controller (feature 03). Queued: commands wait on its queue
+  @ until the 200 Hz rate group calls its run port.
+  instance flightController: MyFlightSim.FlightController base id 0x10018000 \
+    queue size Default.QUEUE_SIZE
 
 
   # ----------------------------------------------------------------------
@@ -86,7 +91,7 @@ module MyFlightSim {
     phase Fpp.ToCpp.Phases.configComponents """
     // Receive simulator frames on 127.0.0.1:FSW_RECV_PORT
     (void) simUdp.configureRecv("127.0.0.1", SimConfig::FSW_RECV_PORT, SimConfig::DATAGRAM_BUFFER_SIZE);
-    // Send to the simulator on 127.0.0.1:SIM_RECV_PORT (used from feature 03)
+    // Send motor commands to the simulator on 127.0.0.1:SIM_RECV_PORT
     (void) simUdp.configureSend("127.0.0.1", SimConfig::SIM_RECV_PORT);
     """
 

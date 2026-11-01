@@ -11,6 +11,8 @@
 #define MyFlightSim_SimLink_HPP
 
 #include "MyFlightSim/Components/SimLink/SimLinkComponentAc.hpp"
+#include "MyFlightSim/Types/ActuatorFrameSerializableAc.hpp"
+#include "MyFlightSim/Types/SensorDataSerializableAc.hpp"
 #include "Os/RawTime.hpp"
 
 namespace MyFlightSim {
@@ -53,6 +55,25 @@ class SimLink final : public SimLinkComponentBase {
                          U32 context           //!< The call order
                          ) override;
 
+    //! Handler implementation for sensorsGet
+    //!
+    //! Returns the sensor data from the most recent simulator frame
+    SensorData sensorsGet_handler(FwIndexType portNum  //!< The port number
+                                  ) override;
+
+    //! Handler implementation for motorsIn
+    //!
+    //! Stores the motor throttles to send at the end of this cycle
+    void motorsIn_handler(FwIndexType portNum,  //!< The port number
+                          const MotorThrottles& throttles) override;
+
+    //! Handler implementation for actuatorSchedIn
+    //!
+    //! Sends the motor throttles to the simulator, answering the current tick
+    void actuatorSchedIn_handler(FwIndexType portNum,  //!< The port number
+                                 U32 context           //!< The call order
+                                 ) override;
+
   private:
     // ----------------------------------------------------------------------
     // Helpers
@@ -72,6 +93,13 @@ class SimLink final : public SimLinkComponentBase {
     U64 m_lastSimTimeUs;       //!< Simulated time of the most recent valid frame
     U32 m_ticksMissed;         //!< Total ticks that never arrived
     U32 m_badFrames;           //!< Total rejected datagrams
+    U32 m_sendErrors;          //!< Total failed sends to the simulator
+
+    SensorData m_sensors;      //!< Sensor data from the most recent valid frame
+    MotorThrottles m_motors;   //!< Motor throttles to send to the simulator
+
+    //! Memory for the outgoing ActuatorFrame (no allocation while flying)
+    U8 m_sendData[ActuatorFrame::SERIALIZED_SIZE];
 
     // Statistics window, restarted on every schedIn call
     bool m_windowStarted;      //!< m_windowStart/m_windowStartSimUs are valid

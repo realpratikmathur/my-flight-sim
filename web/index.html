@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>my-flight-sim — quadcopter viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1220;
+               font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #e8edf5; }
+  #scene { position: fixed; inset: 0; }
+  .panel { position: fixed; background: rgba(10, 16, 30, 0.82); border: 1px solid rgba(255,255,255,0.12);
+           border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 1.45;
+           backdrop-filter: blur(4px); }
+  #hud { top: 12px; left: 12px; width: 270px; }
+  #help { bottom: 12px; left: 12px; width: 400px; color: #b9c3d4; }
+  #controls { top: 12px; right: 12px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; width: 330px; }
+  h1 { font-size: 14px; margin: 0 0 8px; letter-spacing: 0.02em; }
+  .row { display: flex; justify-content: space-between; gap: 8px; }
+  .row span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .status { margin: 6px 0 10px; padding: 6px 8px; border-radius: 6px; font-weight: 600; }
+  .online { background: rgba(34, 160, 90, 0.25); color: #7ff0b0; }
+  .offline { background: rgba(200, 60, 60, 0.25); color: #ff9b9b; }
+  .motors { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+  .motor { text-align: center; font-size: 11px; color: #9fb0c8; }
+  .bar { position: relative; height: 54px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; margin-bottom: 3px; }
+  .bar .cmd { position: absolute; left: 0; right: 0; height: 2px; background: #ffd166; }
+  .bar .act { position: absolute; left: 0; right: 0; bottom: 0; background: #4dabf7; }
+  button { background: #1f2b44; color: #e8edf5; border: 1px solid rgba(255,255,255,0.18); border-radius: 6px;
+           padding: 6px 10px; font-size: 12px; cursor: pointer; }
+  button:hover { background: #2a3a5c; }
+  button.active { background: #3b5bdb; border-color: #5c7cfa; }
+  #banner { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 26px; font-weight: 700;
+            padding: 14px 24px; border-radius: 10px; background: rgba(160, 30, 30, 0.85); display: none; text-align: center; }
+  #banner small { display: block; font-size: 14px; font-weight: 400; margin-top: 6px; }
+  code { background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 4px; color: #e8edf5; }
+</style>
+<script type="importmap">
+  { "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+</head>
+<body>
+<div id="scene"></div>
+
+<div id="hud" class="panel">
+  <h1>Quadcopter</h1>
+  <div id="link" class="status offline">Simulator: connecting…</div>
+  <div class="row"><span>Sim time</span><span id="simTime">–</span></div>
+  <div class="row"><span>Altitude</span><span id="alt">–</span></div>
+  <div class="row"><span>Climb rate</span><span id="vz">–</span></div>
+  <div class="row"><span>Ground speed</span><span id="speed">–</span></div>
+  <div class="row"><span>Tilt / heading</span><span id="att">–</span></div>
+  <div class="row"><span>Position E / N</span><span id="pos">–</span></div>
+  <div class="row"><span>Battery</span><span id="batt">–</span></div>
+  <div class="row"><span>Hover throttle</span><span id="hover">–</span></div>
+  <div class="motors" id="motors"></div>
+  <div style="font-size:11px;color:#8a99b0;margin-top:4px">blue = rotor speed, yellow line = F´ command</div>
+</div>
+
+<div id="controls" class="panel">
+  <button data-cam="chase" class="active">Chase cam</button>
+  <button data-cam="ground">Ground cam</button>
+  <button data-cam="orbit">Orbit cam</button>
+  <button id="reset">Reset vehicle</button>
+  <button id="pause">Pause</button>
+  <button data-speed="0.5">0.5×</button>
+  <button data-speed="1" class="active">1×</button>
+  <button data-speed="2">2×</button>
+</div>
+
+<div id="help" class="panel">
+  This page only <b>shows</b> the vehicle. Everything the vehicle does is decided by
+  the <b>F´ flight software</b>; command it from the F´ GDS at
+  <a href="http://localhost:5000" target="_blank" style="color:#8cb4ff">localhost:5000</a>, e.g.
+  <code>MyFlightSim.flightController.ARM</code> then
+  <code>MyFlightSim.flightController.MOTOR_TEST</code>.
+</div>
+
+<div id="banner"></div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

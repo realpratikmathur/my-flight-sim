@@ -34,6 +34,7 @@ module MyFlightSim {
     instance simUdp
     instance simBufferManager
     instance simLink
+    instance flightController
 
   # ----------------------------------------------------------------------
   # Pattern graph specifiers
@@ -104,8 +105,12 @@ module MyFlightSim {
       # generated deployment.
       simLink.cycleOut -> rateGroupDriver.CycleIn
 
-      # 200 Hz rate group: reserved for flight control (features 03-04)
+      # 200 Hz rate group: flight control. ORDER MATTERS: the flight
+      # controller computes the motor throttles first, then SimLink sends them
+      # to the simulator, answering the tick that started this cycle.
       rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup_200Hz] -> rateGroup_200Hz.CycleIn
+      rateGroup_200Hz.RateGroupMemberOut[0] -> flightController.run
+      rateGroup_200Hz.RateGroupMemberOut[1] -> simLink.actuatorSchedIn
 
       # 10 Hz rate group
       rateGroupDriver.CycleOut[Ports_RateGroups.rateGroup_10Hz] -> rateGroup_10Hz.CycleIn
@@ -144,8 +149,15 @@ module MyFlightSim {
       simLink.drvReceiveReturnOut -> simUdp.recvReturnIn
       simUdp.ready                -> simLink.drvConnected
 
-      # Flight software -> simulator (used starting in feature 03)
+      # Flight software -> simulator
       simLink.drvSendOut -> simUdp.$send
+    }
+
+    connections FlightControl {
+      # The flight controller only sees these two hardware-abstraction ports.
+      # On a real vehicle they would connect to IMU/GPS and motor drivers.
+      flightController.sensorsGet -> simLink.sensorsGet
+      flightController.motorsOut  -> simLink.motorsIn
     }
 
     connections QuadFsw {

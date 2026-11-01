@@ -6,6 +6,7 @@
 
 #include "MyFlightSim/Components/SimLink/SimLink.hpp"
 #include "MyFlightSim/Types/FppConstantsAc.hpp"
+#include "MyFlightSim/Types/SensorFrameSerializableAc.hpp"
 #include "MyFlightSim/Types/SimHeaderSerializableAc.hpp"
 
 namespace MyFlightSim {
@@ -21,6 +22,10 @@ SimLink ::SimLink(const char* const compName)
       m_lastSimTimeUs(0),
       m_ticksMissed(0),
       m_badFrames(0),
+      m_sendErrors(0),
+      m_sensors(),
+      m_motors(0.0f),
+      m_sendData(),
       m_windowStarted(false),
       m_windowStartSimUs(0),
       m_windowFrames(0) {}
@@ -68,16 +73,49 @@ void SimLink ::schedIn_handler(FwIndexType portNum, U32 context) {
     this->m_windowFrames = 0;
 }
 
+SensorData SimLink ::sensorsGet_handler(FwIndexType portNum) {
+    return this->m_sensors;
+}
+
+void SimLink ::motorsIn_handler(FwIndexType portNum, const MotorThrottles& throttles) {
+    this->m_motors = throttles;
+}
+
+void SimLink ::actuatorSchedIn_handler(FwIndexType portNum, U32 context) {
+    if (!this->m_connected) {
+        return;  // No simulator yet: nobody to answer
+    }
+
+    // Answer the most recent tick with the most recent motor throttles
+    const ActuatorFrame frame(SimHeader(SIM_MAGIC, this->m_lastTick, this->m_lastSimTimeUs), this->m_motors);
+
+    // Serialize into our own fixed memory and send it. Drv.Udp's send port is
+    // synchronous and the caller keeps ownership of the buffer.
+    Fw::Buffer buffer(this->m_sendData, sizeof(this->m_sendData));
+    auto serializer = buffer.getSerializer();
+    const Fw::SerializeStatus serStatus = frame.serializeTo(serializer);
+    FW_ASSERT(serStatus == Fw::FW_SERIALIZE_OK, static_cast<FwAssertArgType>(serStatus));
+    buffer.setSize(serializer.getSize());
+
+    const Drv::ByteStreamStatus sendStatus = this->drvSendOut_out(0, buffer);
+    if (sendStatus != Drv::ByteStreamStatus::OP_OK) {
+        this->m_sendErrors++;
+        this->tlmWrite_SendErrorsTotal(this->m_sendErrors);
+        this->log_WARNING_LO_SendFailed(sendStatus);
+    }
+}
+
 // ----------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------
 
 void SimLink ::processDatagram(Fw::Buffer& buffer) {
-    // 1. Decode the header using the code FPP generated for struct SimHeader.
+    // 1. Decode the frame using the code FPP generated for struct SensorFrame.
     //    The deserializer reads big-endian fields in declaration order.
-    SimHeader header;
+    SensorFrame frame;
     auto deserializer = buffer.getDeserializer();
-    const Fw::SerializeStatus status = header.deserializeFrom(deserializer);
+    const Fw::SerializeStatus status = frame.deserializeFrom(deserializer);
+    const SimHeader& header = frame.get_header();
 
     if ((status != Fw::FW_SERIALIZE_OK) || (header.get_magic() != SIM_MAGIC)) {
         this->m_badFrames++;
@@ -100,6 +138,7 @@ void SimLink ::processDatagram(Fw::Buffer& buffer) {
     }
     this->m_lastTick = tick;
     this->m_lastSimTimeUs = header.get_simTimeUs();
+    this->m_sensors = frame.get_sensors();
     this->m_windowFrames++;
 
     this->tlmWrite_Tick(tick);
